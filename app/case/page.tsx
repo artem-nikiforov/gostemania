@@ -1,565 +1,639 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import PageHeader from "../components/PageHeader";
-import { caseData, type GuestReview } from "../data/case";
+import {
+  gameCases,
+  type GameCase,
+  type CaseDoc,
+  type ReviewRow,
+} from "../data/case";
 
-// ─── Типы состояния ──────────────────────────────────────────────────────────
+// ─── Типы слайдов ─────────────────────────────────────────────────────────────
 
-type CaseStep =
-  | "intro"       // вводный текст
-  | "dec-table"   // таблица декабрьских отзывов
-  | "questions"   // вопросы (по одному)
-  | "checklist"   // чек-лист для ТУ
-  | "result";     // итоговый результат
+type Slide =
+  | { type: "intro" }
+  | { type: "study" }
+  | { type: "doc"; docIdx: number; phase: "pre" | "mid" }
+  | { type: "mid-reveal" }
+  | { type: "question"; qIdx: number; phase: "pre" | "mid" }
+  | { type: "checklistQ" }
+  | { type: "checklist" }
+  | { type: "result" };
 
-interface SessionState {
-  step: CaseStep;
-  questionIndex: number; // текущий вопрос в "questions"
-  showHint: boolean;     // показана ли подсказка текущего вопроса
-  checklist: Record<string, boolean>;
-}
-
-const SESSION_KEY = "gostemania_case";
-
-function loadSession(): SessionState | null {
-  try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as SessionState) : null;
-  } catch {
-    return null;
+function computeSlides(gc: GameCase): Slide[] {
+  const s: Slide[] = [
+    { type: "intro" },
+    { type: "study" },
+    ...gc.preDocs.map((_, i) => ({ type: "doc" as const, docIdx: i, phase: "pre" as const })),
+    ...gc.preQuestions.map((_, i) => ({ type: "question" as const, qIdx: i, phase: "pre" as const })),
+  ];
+  if (gc.midDocs && gc.midDocs.length > 0) {
+    s.push({ type: "mid-reveal" });
+    gc.midDocs.forEach((_, i) => s.push({ type: "doc", docIdx: i, phase: "mid" }));
   }
+  if (gc.midQuestions) {
+    gc.midQuestions.forEach((_, i) => s.push({ type: "question", qIdx: i, phase: "mid" }));
+  }
+  s.push({ type: "checklistQ" });
+  s.push({ type: "checklist" });
+  s.push({ type: "result" });
+  return s;
 }
 
-function saveSession(state: SessionState) {
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(state));
-}
+// ─── Рейтинг ─────────────────────────────────────────────────────────────────
 
-function clearSession() {
-  sessionStorage.removeItem(SESSION_KEY);
-}
-
-const defaultState: SessionState = {
-  step: "intro",
-  questionIndex: 0,
-  showHint: false,
-  checklist: Object.fromEntries(caseData.checklist.map((item) => [item.id, false])),
-};
-
-// ─── Компонент таблицы отзывов ───────────────────────────────────────────────
-
-function ReviewsTable({ reviews }: { reviews: GuestReview[] }) {
-  const stars = (n: number) =>
-    Array.from({ length: 5 }, (_, i) => (
-      <span key={i} className={i < n ? "text-bk-yellow" : "text-bk-cream"}>★</span>
-    ));
-
-  const Tag = ({ active, label }: { active: boolean; label: string }) =>
-    active ? (
-      <span className="inline-block text-[10px] bg-bk-orange/10 text-bk-orange border border-bk-orange/20 rounded px-1.5 py-0.5 mr-1 mb-1">
-        {label}
-      </span>
-    ) : null;
-
+function RatingDot({ r }: { r: 1 | 2 | 3 }) {
+  const cls = {
+    1: "bg-red-100 text-red-600",
+    2: "bg-orange-100 text-orange-500",
+    3: "bg-green-100 text-green-600",
+  }[r];
   return (
-    <div className="overflow-x-auto rounded-xl border border-bk-cream">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-bk-cream/60 text-bk-brown/70 text-xs font-semibold uppercase tracking-wide">
-            <th className="text-left px-3 py-3 whitespace-nowrap">Дата</th>
-            <th className="text-left px-3 py-3">Оценка</th>
-            <th className="text-left px-3 py-3">Текст отзыва</th>
-            <th className="text-left px-3 py-3 hidden sm:table-cell">Темы</th>
-          </tr>
-        </thead>
-        <tbody>
-          {reviews.map((review, i) => (
-            <tr key={i} className={`border-t border-bk-cream/70 ${i % 2 === 0 ? "bg-white" : "bg-bk-cream/20"}`}>
-              <td className="px-3 py-3 text-bk-brown/60 whitespace-nowrap font-mono text-xs">{review.date}</td>
-              <td className="px-3 py-3 whitespace-nowrap text-base leading-none">{stars(review.rating)}</td>
-              <td className="px-3 py-3 text-bk-brown leading-snug">
-                {review.text}
-                <div className="sm:hidden mt-1.5">
-                  <Tag active={review.tags.taste} label="Вкус блюда" />
-                  <Tag active={review.tags.speed} label="Скорость" />
-                  <Tag active={review.tags.atmosphere} label="Обстановка" />
-                  <Tag active={review.tags.staff} label="Персонал" />
-                </div>
-              </td>
-              <td className="px-3 py-3 hidden sm:table-cell">
-                <Tag active={review.tags.taste} label="Вкус блюда" />
-                <Tag active={review.tags.speed} label="Скорость" />
-                <Tag active={review.tags.atmosphere} label="Обстановка и чистота" />
-                <Tag active={review.tags.staff} label="Общение персонала" />
-              </td>
+    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${cls}`}>
+      {r}
+    </span>
+  );
+}
+
+// ─── Таблица отзывов ──────────────────────────────────────────────────────────
+
+const ATTRS: { key: keyof ReviewRow; short: string; full: string }[] = [
+  { key: "taste",       short: "Вк", full: "Вкус блюд" },
+  { key: "atmosphere",  short: "Чт", full: "Чистота" },
+  { key: "staff",       short: "Об", full: "Общение" },
+  { key: "speed",       short: "Ск", full: "Скорость" },
+  { key: "temperature", short: "Тп", full: "Температура" },
+  { key: "accuracy",    short: "Тч", full: "Точность" },
+];
+
+function ReviewTable({ rows }: { rows: ReviewRow[] }) {
+  return (
+    <div>
+      <div className="overflow-x-auto rounded-xl border border-bk-brown/20">
+        <table className="w-full text-xs bg-white border-collapse" style={{ minWidth: 520 }}>
+          <thead>
+            <tr className="bg-bk-cream/60">
+              <th className="border border-bk-brown/15 px-2.5 py-2.5 text-left font-semibold text-bk-brown/60 whitespace-nowrap">Дата</th>
+              <th className="border border-bk-brown/15 px-2 py-2.5 text-center font-semibold text-bk-brown/60">★</th>
+              <th className="border border-bk-brown/15 px-2.5 py-2.5 text-left font-semibold text-bk-brown/60">Отзыв</th>
+              {ATTRS.map((a) => (
+                <th key={a.key} title={a.full} className="border border-bk-brown/15 px-1.5 py-2.5 text-center font-semibold text-bk-brown/60">
+                  {a.short}
+                </th>
+              ))}
             </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-bk-cream/25"}>
+                <td className="border border-bk-brown/10 px-2.5 py-2 text-bk-brown/60 whitespace-nowrap">{row.date}</td>
+                <td className="border border-bk-brown/10 px-2 py-2 text-center">
+                  <RatingDot r={row.rating} />
+                </td>
+                <td className="border border-bk-brown/10 px-2.5 py-2 text-bk-brown/80 leading-snug" style={{ maxWidth: 200 }}>
+                  {row.text || <span className="text-bk-brown/25">—</span>}
+                </td>
+                {ATTRS.map((a) => (
+                  <td key={a.key} className="border border-bk-brown/10 px-1.5 py-2 text-center">
+                    {row[a.key]
+                      ? <span className="font-semibold text-bk-brown">✓</span>
+                      : <span className="text-bk-brown/20">—</span>}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11px] text-bk-brown/40 mt-1.5 leading-relaxed">
+        {ATTRS.map((a) => `${a.short} = ${a.full}`).join(" · ")}
+      </p>
+    </div>
+  );
+}
+
+// ─── Документы ────────────────────────────────────────────────────────────────
+
+function DocView({ doc }: { doc: CaseDoc }) {
+  return (
+    <div>
+      <h3 className="font-flame font-bold text-xl sm:text-2xl text-bk-brown mb-4">{doc.title}</h3>
+
+      {doc.type === "reviews" && <ReviewTable rows={doc.rows} />}
+
+      {doc.type === "plan" && (
+        <div className="space-y-3">
+          {doc.header && (
+            <div className="bg-bk-orange/8 border border-bk-orange/20 rounded-xl px-4 py-3 text-center">
+              <p className="font-semibold text-bk-brown text-sm">{doc.header}</p>
+            </div>
+          )}
+          {doc.sections.map((sec, i) => (
+            <div key={i} className="bg-white border border-bk-brown/15 rounded-xl p-4">
+              <div className="flex flex-wrap gap-2 items-start mb-2.5">
+                <span className="font-semibold text-bk-brown text-sm leading-snug">{sec.goal}</span>
+                <span className="text-xs bg-bk-green/10 text-bk-green px-2 py-0.5 rounded-full whitespace-nowrap shrink-0">
+                  {sec.focus}
+                </span>
+              </div>
+              <ul className="space-y-1.5">
+                {sec.actions.map((action, j) => (
+                  <li key={j} className="flex gap-2 text-sm text-bk-brown/75">
+                    <span className="text-bk-brown/30 shrink-0 mt-0.5">→</span>
+                    <span>{action}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ─── Рендер markdown-подобного текста (простой) ──────────────────────────────
-
-function SimpleMarkdown({ text }: { text: string }) {
-  const lines = text.split("\n");
-  return (
-    <div className="space-y-1.5 text-sm text-bk-brown leading-relaxed">
-      {lines.map((line, i) => {
-        if (line.startsWith("**") && line.endsWith("**")) {
-          return <p key={i} className="font-bold text-bk-brown">{line.slice(2, -2)}</p>;
-        }
-        if (line.startsWith("| ")) {
-          return null; // таблица — обрабатывается отдельно
-        }
-        if (line.startsWith("*(")) {
-          return <p key={i} className="text-bk-brown/50 italic text-xs">{line.slice(1, -1)}</p>;
-        }
-        if (line.match(/^\d+\./)) {
-          return <p key={i} className="ml-3">{line}</p>;
-        }
-        return line ? <p key={i}>{line}</p> : <div key={i} className="h-1" />;
-      })}
-    </div>
-  );
-}
-
-// ─── Шаг «Введение» ─────────────────────────────────────────────────────────
-
-function IntroStep({ onNext }: { onNext: () => void }) {
-  return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
-      <div className="bg-bk-cream/40 border border-bk-cream rounded-2xl p-6 sm:p-8 mb-8">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-8 h-8 rounded-full bg-bk-brown/10 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#502314" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
-            </svg>
-          </div>
-          <span className="text-xs font-semibold text-bk-brown/60 uppercase tracking-wide">Территориальный управляющий</span>
-        </div>
-        <p className="text-bk-brown leading-relaxed text-base">{caseData.intro}</p>
-      </div>
-
-      <div className="text-center">
-        <button
-          onClick={onNext}
-          className="inline-flex items-center gap-2 px-8 py-3 bg-bk-yellow text-bk-brown font-bold rounded-xl hover:bg-bk-yellow/80 transition-colors"
-        >
-          Начать
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14M12 5l7 7-7 7" />
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Шаг «Таблица декабрьских отзывов» ──────────────────────────────────────
-
-function DecTableStep({ onNext }: { onNext: () => void }) {
-  return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
-      <div className="mb-6">
-        <h2 className="font-flame font-bold text-xl text-bk-brown mb-1">{caseData.tableTitle}</h2>
-        <p className="text-bk-brown/60 text-sm">Изучи отзывы. Обрати внимание на оценки и темы.</p>
-      </div>
-      <ReviewsTable reviews={caseData.decemberReviews} />
-      <div className="mt-8 text-center">
-        <button
-          onClick={onNext}
-          className="inline-flex items-center gap-2 px-8 py-3 bg-bk-yellow text-bk-brown font-bold rounded-xl hover:bg-bk-yellow/80 transition-colors"
-        >
-          Далее
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14M12 5l7 7-7 7" />
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Шаг «Вопросы» ──────────────────────────────────────────────────────────
-
-function QuestionsStep({
-  questionIndex,
-  showHint,
-  onToggleHint,
-  onNext,
-}: {
-  questionIndex: number;
-  showHint: boolean;
-  onToggleHint: () => void;
-  onNext: () => void;
-}) {
-  const question = caseData.questions[questionIndex];
-  const isLast = questionIndex === caseData.questions.length - 1;
-
-  return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
-      {/* Прогресс */}
-      <div className="flex items-center gap-1.5 mb-6">
-        {caseData.questions.map((_, i) => (
-          <div
-            key={i}
-            className={`h-1.5 flex-1 rounded-full transition-colors ${
-              i < questionIndex ? "bg-bk-yellow" : i === questionIndex ? "bg-bk-yellow" : "bg-bk-cream"
-            }`}
-          />
-        ))}
-        <span className="text-xs text-bk-brown/50 shrink-0 font-mono">{questionIndex + 1}/{caseData.questions.length}</span>
-      </div>
-
-      {/* Реплика ТУ */}
-      <div className="bg-bk-cream/50 border border-bk-cream rounded-2xl p-5 sm:p-6 mb-5">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-7 h-7 rounded-full bg-bk-brown/10 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#502314" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
-            </svg>
-          </div>
-          <span className="text-xs font-semibold text-bk-brown/60 uppercase tracking-wide">ТУ говорит директору:</span>
-        </div>
-        <p className="text-bk-brown leading-relaxed">{question.facilitatorText}</p>
-      </div>
-
-      {/* Дополнительный контент после нажатия «Далее» на предыдущем вопросе */}
-      {question.afterHintText === "actionPlan" && (
-        <div className="bg-white border border-bk-cream rounded-xl p-4 mb-5">
-          <SimpleMarkdown text={caseData.actionPlanJanuary} />
         </div>
       )}
-      {question.afterHintText === "januaryReviews" && (
-        <div className="mb-5">
-          <p className="font-semibold text-bk-brown mb-3 text-sm">Отзывы гостей — Январь</p>
-          <ReviewsTable reviews={caseData.januaryReviews} />
+
+      {doc.type === "plan-empty" && (
+        <div className="border-2 border-dashed border-bk-brown/20 rounded-xl p-10 text-center">
+          <div className="w-12 h-12 rounded-full bg-bk-brown/8 mx-auto mb-3 flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#502314" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.3">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="15" x2="12" y2="15"/>
+            </svg>
+          </div>
+          <p className="text-bk-brown/50 text-sm font-medium leading-relaxed">{doc.note}</p>
         </div>
       )}
-      {question.afterHintText === "dobroReport" && (
-        <div className="bg-white border border-bk-cream rounded-xl p-4 mb-5 overflow-x-auto">
-          <SimpleMarkdown text={caseData.dobroReport} />
-          <table className="w-full text-xs mt-2">
+
+      {doc.type === "plan-text" && (
+        <div className="space-y-3">
+          {doc.items.map((item, i) => (
+            <div key={i} className="bg-white border border-bk-brown/15 rounded-xl p-4">
+              <p className="text-xs font-semibold text-bk-green uppercase tracking-wide mb-1.5">{item.attribute}</p>
+              <p className="text-sm text-bk-brown/80 leading-relaxed">{item.text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {doc.type === "plan-simple" && (
+        <div className="overflow-x-auto rounded-xl border border-bk-brown/20">
+          <table className="w-full text-sm bg-white border-collapse">
             <thead>
-              <tr className="bg-bk-cream/60 text-bk-brown/70 text-xs">
-                <th className="text-left px-2 py-2">Период</th>
-                <th className="text-left px-2 py-2">Жалоб на температуру</th>
-                <th className="text-left px-2 py-2">Выдано комплементов</th>
-                <th className="text-left px-2 py-2">% использования</th>
+              <tr className="bg-bk-cream/60">
+                <th className="border border-bk-brown/15 px-3 py-2.5 text-left font-semibold text-bk-brown/60 whitespace-nowrap w-28">Дата</th>
+                <th className="border border-bk-brown/15 px-3 py-2.5 text-left font-semibold text-bk-brown/60">Действие</th>
               </tr>
             </thead>
             <tbody>
-              <tr className="border-t border-bk-cream">
-                <td className="px-2 py-2">Декабрь</td>
-                <td className="px-2 py-2">7</td>
-                <td className="px-2 py-2">1</td>
-                <td className="px-2 py-2 text-bk-red font-semibold">14%</td>
-              </tr>
-              <tr className="border-t border-bk-cream bg-bk-cream/20">
-                <td className="px-2 py-2">Январь</td>
-                <td className="px-2 py-2">4</td>
-                <td className="px-2 py-2">0</td>
-                <td className="px-2 py-2 text-bk-red font-semibold">0%</td>
-              </tr>
+              {doc.rows.map((row, i) => (
+                <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-bk-cream/25"}>
+                  <td className="border border-bk-brown/10 px-3 py-2.5 text-bk-brown/60 whitespace-nowrap align-top">{row.date}</td>
+                  <td className="border border-bk-brown/10 px-3 py-2.5 text-bk-brown/80 leading-snug">{row.action}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* Подсказка */}
-      <div className="mb-6">
-        <button
-          onClick={onToggleHint}
-          className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 transition-all ${
-            showHint
-              ? "border-bk-yellow bg-bk-yellow/10"
-              : "border-bk-cream hover:border-bk-yellow/40"
-          }`}
-        >
-          <span className="text-sm font-medium text-bk-brown">
-            {showHint ? "Скрыть подсказку" : "Показать подсказку (правильный ответ директора)"}
-          </span>
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={`text-bk-yellow transition-transform ${showHint ? "rotate-180" : ""}`}
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-        {showHint && (
-          <div className="mt-2 px-4 py-3 bg-bk-yellow/10 border border-bk-yellow/30 rounded-xl">
-            <p className="text-xs text-bk-brown/60 font-semibold uppercase tracking-wide mb-1">Правильный ответ директора:</p>
-            <p className="text-bk-brown text-sm italic leading-relaxed">{question.hint}</p>
-          </div>
-        )}
-      </div>
-
-      <div className="text-center">
-        <button
-          onClick={onNext}
-          className="inline-flex items-center gap-2 px-8 py-3 bg-bk-yellow text-bk-brown font-bold rounded-xl hover:bg-bk-yellow/80 transition-colors"
-        >
-          {isLast ? "Перейти к чек-листу" : "Далее"}
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14M12 5l7 7-7 7" />
-          </svg>
-        </button>
-      </div>
+      {doc.type === "complements" && (
+        <div className="overflow-x-auto rounded-xl border border-bk-brown/20">
+          <table className="w-full text-sm bg-white border-collapse">
+            <thead>
+              <tr className="bg-bk-cream/60">
+                {["Месяц", "Лимит", "Использовано", "Остаток", "ДОБРО"].map((h) => (
+                  <th key={h} className="border border-bk-brown/15 px-3 py-2.5 text-left font-semibold text-bk-brown/60 whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {doc.rows.map((row, i) => (
+                <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-bk-cream/25"}>
+                  <td className="border border-bk-brown/10 px-3 py-2.5">{row.month}</td>
+                  <td className="border border-bk-brown/10 px-3 py-2.5 text-center">{row.limit}</td>
+                  <td className="border border-bk-brown/10 px-3 py-2.5 text-center">
+                    <span className={row.used === 0 ? "text-red-500 font-semibold" : ""}>{row.used}</span>
+                  </td>
+                  <td className="border border-bk-brown/10 px-3 py-2.5 text-center">{row.remaining}</td>
+                  <td className="border border-bk-brown/10 px-3 py-2.5 text-center">{row.dobroUsed}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── Шаг «Чек-лист» ─────────────────────────────────────────────────────────
+// ─── Кнопка «Далее» ───────────────────────────────────────────────────────────
 
-function ChecklistStep({
-  checklist,
-  onToggle,
-  onFinish,
-}: {
-  checklist: Record<string, boolean>;
-  onToggle: (id: string) => void;
-  onFinish: () => void;
-}) {
+function NextBtn({ onClick, label = "Далее →" }: { onClick: () => void; label?: string }) {
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
-      <h2 className="font-flame font-bold text-xl text-bk-brown mb-2">Чек-лист ТУ</h2>
-      <p className="text-bk-brown/60 text-sm mb-6 leading-relaxed">
-        Отметьте, что директор выполнил в ходе разбора кейса.
-      </p>
-
-      <div className="space-y-3 mb-8">
-        {caseData.checklist.map((item) => (
-          <label
-            key={item.id}
-            className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-              checklist[item.id]
-                ? "border-bk-green/50 bg-bk-green/5"
-                : "border-bk-cream hover:border-bk-green/20"
-            }`}
-          >
-            <div
-              className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
-                checklist[item.id] ? "bg-bk-green border-bk-green" : "border-bk-cream/80"
-              }`}
-              onClick={() => onToggle(item.id)}
-            >
-              {checklist[item.id] && (
-                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              )}
-            </div>
-            <span
-              className={`text-sm leading-snug ${checklist[item.id] ? "text-bk-brown" : "text-bk-brown/70"}`}
-              onClick={() => onToggle(item.id)}
-            >
-              {item.text}
-            </span>
-          </label>
-        ))}
-      </div>
-
-      <div className="text-center">
-        <button
-          onClick={onFinish}
-          className="inline-flex items-center gap-2 px-8 py-3 bg-bk-brown text-white font-bold rounded-xl hover:bg-bk-brown/80 transition-colors"
-        >
-          Завершить и посмотреть результат
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14M12 5l7 7-7 7" />
-          </svg>
-        </button>
-      </div>
-    </div>
+    <button
+      onClick={onClick}
+      className="w-full py-3 rounded-xl bg-white border-2 border-bk-brown/20 text-bk-brown font-semibold hover:bg-bk-cream/50 transition-colors"
+    >
+      {label}
+    </button>
   );
 }
 
-// ─── Шаг «Результат» ─────────────────────────────────────────────────────────
+// ─── Игровой экран ────────────────────────────────────────────────────────────
 
-function ResultStep({
-  checklist,
-  onRestart,
-}: {
-  checklist: Record<string, boolean>;
-  onRestart: () => void;
-}) {
-  const total = caseData.checklist.length;
-  const done = Object.values(checklist).filter(Boolean).length;
-  const percent = Math.round((done / total) * 100);
+function CaseGame({ gameCase, onBack }: { gameCase: GameCase; onBack: () => void }) {
+  const [slideIndex, setSlideIndex] = useState(0);
+  const [showHint, setShowHint] = useState(false);
+  const [checklist, setChecklist] = useState<Record<string, boolean>>({});
 
-  const comment = () => {
-    if (percent === 100) return "Отличная работа! Директор полностью разобрался в ситуации и предложил конкретный план. Так держать!";
-    if (percent >= 67) return "Хороший результат! Большинство ключевых моментов учтено. Обрати внимание на пропущенные пункты в следующий раз.";
-    if (percent >= 34) return "Есть над чем поработать. Несколько важных аспектов были упущены. Рекомендуем повторить кейс.";
-    return "Нужно серьёзно проработать кейс. Попробуй снова, обращая особое внимание на каждый вопрос.";
+  const slides = useMemo(() => computeSlides(gameCase), [gameCase]);
+  const slide = slides[slideIndex];
+  const progress = ((slideIndex + 1) / slides.length) * 100;
+
+  const advance = () => {
+    setSlideIndex((s) => s + 1);
+    setShowHint(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const color = percent === 100 ? "text-bk-green" : percent >= 67 ? "text-bk-orange" : "text-bk-red";
-  const ring = percent === 100 ? "bg-bk-green/10" : percent >= 67 ? "bg-bk-orange/10" : "bg-bk-red/10";
+  const checkedCount = Object.values(checklist).filter(Boolean).length;
+  const totalItems = gameCase.checklist.length;
+  const pct = totalItems > 0 ? Math.round((checkedCount / totalItems) * 100) : 0;
 
-  return (
-    <div className="max-w-lg mx-auto px-4 sm:px-6 py-12 text-center">
-      <div className={`w-28 h-28 rounded-full mx-auto mb-6 flex items-center justify-center ${ring}`}>
-        <span className={`font-flame font-bold text-4xl ${color}`}>{percent}%</span>
-      </div>
-      <h2 className="font-flame font-bold text-2xl text-bk-brown mb-3">
-        Выполнено {done} из {total} пунктов
-      </h2>
-      <p className="text-bk-brown/65 text-base leading-relaxed mb-6">{comment()}</p>
-
-      {/* Итоговый список */}
-      <div className="text-left space-y-2 mb-8">
-        {caseData.checklist.map((item) => (
-          <div key={item.id} className="flex items-start gap-2.5">
-            <span className={`text-base shrink-0 mt-0.5 ${checklist[item.id] ? "text-bk-green" : "text-bk-red/60"}`}>
-              {checklist[item.id] ? "✓" : "✗"}
+  function renderSlide() {
+    // ── Вступление ────────────────────────────────────────────────────────────
+    if (slide.type === "intro") {
+      return (
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
+          <div className="flex items-center gap-2 mb-4">
+            <span className={`text-xs font-semibold px-3 py-1 rounded-full ${gameCase.badgeColor}`}>
+              {gameCase.badge}
             </span>
-            <span className={`text-sm leading-snug ${checklist[item.id] ? "text-bk-brown" : "text-bk-brown/50"}`}>
-              {item.text}
-            </span>
+            <span className="text-xs text-bk-brown/40">Кейс {gameCase.number}</span>
           </div>
-        ))}
-      </div>
-
-      <button
-        onClick={onRestart}
-        className="px-8 py-3 bg-bk-yellow text-bk-brown font-bold rounded-xl hover:bg-bk-yellow/80 transition-colors"
-      >
-        Начать заново
-      </button>
-    </div>
-  );
-}
-
-// ─── Главный компонент страницы ──────────────────────────────────────────────
-
-export default function CasePage() {
-  const [state, setState] = useState<SessionState>(defaultState);
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [showResumePrompt, setShowResumePrompt] = useState(false);
-  const [savedState, setSavedState] = useState<SessionState | null>(null);
-
-  useEffect(() => {
-    const s = loadSession();
-    if (s && s.step !== "intro") {
-      setSavedState(s);
-      setShowResumePrompt(true);
+          <h2 className="font-flame font-bold text-2xl sm:text-3xl text-bk-brown mb-5 leading-snug">
+            {gameCase.title}
+          </h2>
+          <div className="bg-bk-cream/60 border border-bk-cream rounded-2xl p-5 mb-8">
+            <p className="text-xs font-semibold text-bk-orange uppercase tracking-wide mb-2">ТУ говорит:</p>
+            <p className="text-bk-brown/85 text-sm sm:text-base leading-relaxed">{gameCase.intro}</p>
+          </div>
+          <button
+            onClick={advance}
+            className="w-full py-3.5 rounded-xl bg-bk-orange text-white font-flame font-bold text-lg hover:bg-bk-orange/80 transition-colors"
+          >
+            Начать →
+          </button>
+        </div>
+      );
     }
-    setIsLoaded(true);
-  }, []);
 
-  const updateState = (patch: Partial<SessionState>) => {
-    setState((prev) => {
-      const next = { ...prev, ...patch };
-      saveSession(next);
-      return next;
-    });
-  };
-
-  const handleResume = () => {
-    if (savedState) {
-      setState(savedState);
+    // ── Изучи материалы ───────────────────────────────────────────────────────
+    if (slide.type === "study") {
+      return (
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
+          <h3 className="font-flame font-bold text-2xl text-bk-brown mb-3">Изучи материалы</h3>
+          <p className="text-bk-brown/60 text-sm mb-5">ТУ передаёт директору следующие отчёты:</p>
+          <div className="space-y-3 mb-8">
+            {gameCase.studyItems.map((item, i) => (
+              <div key={i} className="flex gap-3 items-start bg-white border border-bk-brown/15 rounded-xl px-4 py-3">
+                <span className="w-6 h-6 rounded-full bg-bk-brown/10 text-bk-brown text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  {i + 1}
+                </span>
+                <span className="text-sm text-bk-brown/80">{item}</span>
+              </div>
+            ))}
+          </div>
+          <NextBtn onClick={advance} label="Перейти к материалам →" />
+        </div>
+      );
     }
-    setShowResumePrompt(false);
-  };
 
-  const handleRestart = () => {
-    clearSession();
-    setState(defaultState);
-    setShowResumePrompt(false);
-  };
+    // ── Документ ─────────────────────────────────────────────────────────────
+    if (slide.type === "doc") {
+      const docs = slide.phase === "pre" ? gameCase.preDocs : (gameCase.midDocs ?? []);
+      const doc = docs[slide.docIdx];
+      if (!doc) return null;
+      return (
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+          <div className="mb-6">
+            <DocView doc={doc} />
+          </div>
+          <NextBtn onClick={advance} />
+        </div>
+      );
+    }
 
-  if (!isLoaded) return null;
-
-  // Диалог «Продолжить / Начать заново»
-  if (showResumePrompt) {
-    return (
-      <div className="min-h-screen bg-white">
-        <PageHeader backHref="/" title="Кейс с ТУ" subtitle="Индекс Гостемании" accent="yellow" />
-        <div className="max-w-lg mx-auto px-4 sm:px-6 py-16 text-center">
-          <div className="w-16 h-16 rounded-full bg-bk-yellow/20 mx-auto mb-6 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#FFAA00" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
+    // ── Промежуточное раскрытие ───────────────────────────────────────────────
+    if (slide.type === "mid-reveal") {
+      return (
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-bk-yellow/20 mx-auto mb-5 flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#502314" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.55">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
             </svg>
           </div>
-          <h2 className="font-flame font-bold text-2xl text-bk-brown mb-3">Есть незавершённый кейс</h2>
-          <p className="text-bk-brown/60 mb-8">Хотите продолжить с того места, где остановились?</p>
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <h3 className="font-flame font-bold text-2xl text-bk-brown mb-3">
+            Результаты после визита ТУ
+          </h3>
+          <p className="text-bk-brown/60 text-sm mb-8 leading-relaxed">
+            ТУ посетил ресторан, помог директору составить план и отработал с командой.<br />Посмотрим, что изменилось.
+          </p>
+          <button
+            onClick={advance}
+            className="w-full py-3.5 rounded-xl bg-bk-yellow text-bk-brown font-flame font-bold text-lg hover:bg-bk-yellow/80 transition-colors"
+          >
+            Посмотреть результаты →
+          </button>
+        </div>
+      );
+    }
+
+    // ── Вопрос ───────────────────────────────────────────────────────────────
+    if (slide.type === "question") {
+      const questions = slide.phase === "pre" ? gameCase.preQuestions : (gameCase.midQuestions ?? []);
+      const q = questions[slide.qIdx];
+      if (!q) return null;
+      const qNum = slide.phase === "pre"
+        ? slide.qIdx + 1
+        : gameCase.preQuestions.length + slide.qIdx + 1;
+
+      return (
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
+          <p className="text-xs font-semibold text-bk-brown/40 mb-3">Вопрос {qNum}</p>
+          <div className="bg-bk-cream/60 border border-bk-cream rounded-2xl p-5 mb-5">
+            <p className="text-xs font-semibold text-bk-orange uppercase tracking-wide mb-2">ТУ спрашивает:</p>
+            <p className="text-bk-brown text-sm sm:text-base leading-relaxed">{q.facilitatorText}</p>
+          </div>
+
+          {!showHint ? (
             <button
-              onClick={handleResume}
-              className="px-8 py-3 bg-bk-yellow text-bk-brown font-bold rounded-xl hover:bg-bk-yellow/80 transition-colors"
+              onClick={() => setShowHint(true)}
+              className="w-full py-3 rounded-xl bg-white border-2 border-bk-brown/15 text-bk-brown/65 font-semibold hover:bg-bk-cream/50 transition-colors mb-4"
             >
-              Продолжить
+              💡 Показать правильный ответ
+            </button>
+          ) : (
+            <>
+              <div className="bg-bk-green/10 border border-bk-green/25 rounded-2xl p-5 mb-5">
+                <p className="text-xs font-semibold text-bk-green uppercase tracking-wide mb-2">Правильный ответ:</p>
+                <p className="text-bk-brown/85 text-sm leading-relaxed">{q.hint}</p>
+              </div>
+              <button
+                onClick={advance}
+                className="w-full py-3 rounded-xl bg-bk-green text-white font-semibold hover:bg-bk-green/80 transition-colors"
+              >
+                Далее →
+              </button>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // ── Вопрос перед чеклистом ────────────────────────────────────────────────
+    if (slide.type === "checklistQ") {
+      return (
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
+          <h3 className="font-flame font-bold text-2xl text-bk-brown mb-4">Подводим итоги</h3>
+          <div className="bg-bk-cream/60 border border-bk-cream rounded-2xl p-5 mb-5">
+            <p className="text-xs font-semibold text-bk-orange uppercase tracking-wide mb-2">ТУ просит:</p>
+            <p className="text-bk-brown text-sm sm:text-base leading-relaxed">{gameCase.checklistQuestion}</p>
+          </div>
+          <p className="text-bk-brown/50 text-sm mb-6">
+            Выслушай ответ директора, затем отметь в чеклисте то, что он правильно назвал.
+          </p>
+          <button
+            onClick={advance}
+            className="w-full py-3 rounded-xl bg-bk-orange text-white font-semibold hover:bg-bk-orange/80 transition-colors"
+          >
+            Перейти к чеклисту →
+          </button>
+        </div>
+      );
+    }
+
+    // ── Чеклист ───────────────────────────────────────────────────────────────
+    if (slide.type === "checklist") {
+      return (
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
+          <h3 className="font-flame font-bold text-2xl text-bk-brown mb-2">Чеклист ТУ</h3>
+          <p className="text-bk-brown/50 text-sm mb-5">Отметь пункты, которые директор назвал правильно.</p>
+          <div className="space-y-2.5 mb-5">
+            {gameCase.checklist.map((item) => {
+              const on = !!checklist[item.id];
+              return (
+                <label
+                  key={item.id}
+                  className={`flex gap-3 items-start p-4 rounded-xl border-2 cursor-pointer transition-all select-none ${
+                    on ? "border-bk-green/40 bg-bk-green/8" : "border-bk-cream bg-white hover:border-bk-green/25"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={on}
+                    onChange={(e) =>
+                      setChecklist((prev) => ({ ...prev, [item.id]: e.target.checked }))
+                    }
+                  />
+                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                    on ? "border-bk-green bg-bk-green" : "border-bk-brown/25"
+                  }`}>
+                    {on && (
+                      <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                        <polyline points="2 6 5 9 10 3" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    )}
+                  </div>
+                  <span className={`text-sm leading-relaxed ${on ? "text-bk-brown" : "text-bk-brown/70"}`}>
+                    {item.text}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+
+          {/* Прогресс */}
+          <div className="flex items-center gap-3 mb-4 px-1">
+            <div className="flex-1 h-1.5 bg-bk-cream rounded-full overflow-hidden">
+              <div
+                className="h-full bg-bk-green rounded-full transition-all duration-300"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="text-xs font-semibold text-bk-brown/60 whitespace-nowrap">
+              {checkedCount} / {totalItems}
+            </span>
+          </div>
+
+          <button
+            onClick={advance}
+            className="w-full py-3 rounded-xl bg-bk-green text-white font-semibold hover:bg-bk-green/80 transition-colors"
+          >
+            Завершить →
+          </button>
+        </div>
+      );
+    }
+
+    // ── Результат ─────────────────────────────────────────────────────────────
+    if (slide.type === "result") {
+      const scoreColor =
+        pct >= 80 ? "text-bk-green border-bk-green/30 bg-bk-green/8" :
+        pct >= 50 ? "text-bk-orange border-bk-orange/30 bg-bk-orange/8" :
+        "text-bk-red border-bk-red/25 bg-bk-red/8";
+      const msg =
+        pct >= 80 ? "Отлично! Директор уверенно разобрался в ситуации." :
+        pct >= 50 ? "Хорошо, но есть пробелы — обсудите отмеченные пункты подробнее." :
+        "Нужна доработка. Вернитесь к материалам и разберите ситуацию ещё раз.";
+
+      return (
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10 text-center">
+          <div className={`w-24 h-24 rounded-full mx-auto mb-5 flex items-center justify-center text-3xl font-flame font-bold border-4 ${scoreColor}`}>
+            {pct}%
+          </div>
+          <h3 className="font-flame font-bold text-2xl text-bk-brown mb-2">
+            {checkedCount} из {totalItems} пунктов
+          </h3>
+          <p className="text-bk-brown/60 text-sm leading-relaxed mb-8">{msg}</p>
+
+          <div className="space-y-2 text-left mb-8">
+            {gameCase.checklist.map((item) => {
+              const on = !!checklist[item.id];
+              return (
+                <div
+                  key={item.id}
+                  className={`flex gap-2.5 items-start px-4 py-2.5 rounded-xl text-sm ${
+                    on ? "bg-bk-green/8 text-bk-brown" : "bg-bk-cream/60 text-bk-brown/45"
+                  }`}
+                >
+                  <span className={on ? "text-bk-green" : "text-bk-brown/25"}>{on ? "✓" : "—"}</span>
+                  {item.text}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={() => {
+                setSlideIndex(0);
+                setShowHint(false);
+                setChecklist({});
+                window.scrollTo({ top: 0 });
+              }}
+              className="flex-1 py-3 rounded-xl bg-white border-2 border-bk-brown/20 text-bk-brown/65 font-semibold hover:bg-bk-cream/50 transition-colors"
+            >
+              🔁 Начать заново
             </button>
             <button
-              onClick={handleRestart}
-              className="px-8 py-3 border-2 border-bk-cream text-bk-brown/70 font-medium rounded-xl hover:bg-bk-cream/50 transition-colors"
+              onClick={onBack}
+              className="flex-1 py-3 rounded-xl bg-bk-orange text-white font-semibold hover:bg-bk-orange/80 transition-colors"
             >
-              Начать заново
+              📋 Другой кейс
             </button>
           </div>
         </div>
-      </div>
-    );
+      );
+    }
+
+    return null;
   }
 
   return (
     <div className="min-h-screen bg-white">
-      <PageHeader backHref="/" title="Кейс с ТУ" subtitle="Индекс Гостемании" accent="yellow" />
+      {/* Шапка с прогрессом */}
+      <div className="bg-white border-b border-bk-cream sticky top-0 z-30">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-3">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onBack}
+              className="text-bk-brown/45 hover:text-bk-brown transition-colors"
+              aria-label="Назад"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5M12 5l-7 7 7 7"/>
+              </svg>
+            </button>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] text-bk-brown/40 font-medium">Кейс {gameCase.number}</p>
+              <p className="text-sm font-flame font-bold text-bk-brown truncate leading-tight">{gameCase.title}</p>
+            </div>
+            <span className="text-xs text-bk-brown/35 shrink-0 font-mono">
+              {slideIndex + 1}/{slides.length}
+            </span>
+          </div>
+          <div className="mt-2 h-1 bg-bk-cream rounded-full overflow-hidden">
+            <div
+              className="h-full bg-bk-orange rounded-full transition-all duration-500"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      </div>
 
-      {state.step === "intro" && (
-        <IntroStep onNext={() => updateState({ step: "dec-table" })} />
-      )}
-
-      {state.step === "dec-table" && (
-        <DecTableStep onNext={() => updateState({ step: "questions", questionIndex: 0, showHint: false })} />
-      )}
-
-      {state.step === "questions" && (
-        <QuestionsStep
-          questionIndex={state.questionIndex}
-          showHint={state.showHint}
-          onToggleHint={() => updateState({ showHint: !state.showHint })}
-          onNext={() => {
-            const isLast = state.questionIndex === caseData.questions.length - 1;
-            if (isLast) {
-              updateState({ step: "checklist", showHint: false });
-            } else {
-              updateState({ questionIndex: state.questionIndex + 1, showHint: false });
-            }
-          }}
-        />
-      )}
-
-      {state.step === "checklist" && (
-        <ChecklistStep
-          checklist={state.checklist}
-          onToggle={(id) =>
-            updateState({ checklist: { ...state.checklist, [id]: !state.checklist[id] } })
-          }
-          onFinish={() => updateState({ step: "result" })}
-        />
-      )}
-
-      {state.step === "result" && (
-        <ResultStep
-          checklist={state.checklist}
-          onRestart={handleRestart}
-        />
-      )}
+      {/* Контент */}
+      {renderSlide()}
     </div>
   );
+}
+
+// ─── Выбор кейса ─────────────────────────────────────────────────────────────
+
+function CaseSelector({ onSelect }: { onSelect: (gc: GameCase) => void }) {
+  return (
+    <div className="min-h-screen bg-white">
+      <PageHeader
+        backHref="/"
+        title="Кейс с ТУ"
+        subtitle="Ролевая игра для ТУ и директора ресторана"
+        accent="yellow"
+      />
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+        <h2 className="font-flame font-bold text-2xl sm:text-3xl text-bk-brown mb-2">Выбери кейс</h2>
+        <p className="text-bk-brown/55 text-sm mb-7">
+          ТУ проводит разбор реальной ситуации с директором ресторана. Изучите вместе отзывы, план и ответьте на вопросы.
+        </p>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          {gameCases.map((gc) => {
+            const docCount = gc.preDocs.length + (gc.midDocs?.length ?? 0);
+            const qCount = gc.preQuestions.length + (gc.midQuestions?.length ?? 0);
+            return (
+              <button
+                key={gc.id}
+                onClick={() => onSelect(gc)}
+                className="w-full text-left bg-white border-2 border-bk-cream hover:border-bk-yellow/50 rounded-2xl p-5 transition-all hover:shadow-md group"
+              >
+                <div className="flex items-start justify-between gap-2 mb-3">
+                  <span className="text-4xl font-flame font-bold text-bk-brown/12 leading-none">
+                    {gc.number < 10 ? `0${gc.number}` : gc.number}
+                  </span>
+                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full shrink-0 ${gc.badgeColor}`}>
+                    {gc.badge}
+                  </span>
+                </div>
+                <h3 className="font-flame font-bold text-lg text-bk-brown group-hover:text-bk-brown/75 leading-snug mb-1 transition-colors">
+                  {gc.title}
+                </h3>
+                <p className="text-xs text-bk-brown/35">
+                  {docCount} {docCount === 1 ? "документ" : "документа"} · {qCount} {qCount === 1 ? "вопрос" : "вопроса"} · {gc.checklist.length} пунктов чеклиста
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Страница ─────────────────────────────────────────────────────────────────
+
+export default function CasePage() {
+  const [selectedCase, setSelectedCase] = useState<GameCase | null>(null);
+
+  if (selectedCase) {
+    return <CaseGame gameCase={selectedCase} onBack={() => setSelectedCase(null)} />;
+  }
+
+  return <CaseSelector onSelect={setSelectedCase} />;
 }

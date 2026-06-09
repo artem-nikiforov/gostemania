@@ -7,7 +7,6 @@ const sections = [
     title: "Речи директора",
     description:
       "Шаблоны и готовые примеры вдохновляющих речей для работы с командой на все случаи жизни.",
-    color: "orange",
     icon: (
       <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -16,7 +15,7 @@ const sections = [
     tag: "Для директора",
     tagColor: "bg-bk-orange/10 text-bk-orange",
     border: "border-bk-orange/20 hover:border-bk-orange/60",
-    accent: "bg-bk-orange",
+    iconBg: "bg-bk-orange",
   },
   {
     href: "/trainer",
@@ -24,7 +23,6 @@ const sections = [
     title: "Чат-тренажёр",
     description:
       "Отработай сценарии работы с недовольным Гостем в интерактивном чате. Выбери правильные ответы и доведи Гостя до улыбки.",
-    color: "green",
     icon: (
       <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
@@ -33,7 +31,7 @@ const sections = [
     tag: "Для сотрудника",
     tagColor: "bg-bk-green/10 text-bk-green",
     border: "border-bk-green/20 hover:border-bk-green/60",
-    accent: "bg-bk-green",
+    iconBg: "bg-bk-green",
   },
   {
     href: "/case",
@@ -41,7 +39,6 @@ const sections = [
     title: "Кейс с ТУ",
     description:
       "Ролевая игра для территориального управляющего и директора ресторана. Разбор реальной ситуации с Индексом Гостемании.",
-    color: "yellow",
     icon: (
       <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
@@ -52,7 +49,7 @@ const sections = [
     tag: "Для ТУ и директора",
     tagColor: "bg-bk-yellow/20 text-bk-brown",
     border: "border-bk-yellow/30 hover:border-bk-yellow/80",
-    accent: "bg-bk-yellow",
+    iconBg: "bg-bk-yellow",
   },
 ];
 
@@ -70,7 +67,7 @@ export default function HomePage() {
             </div>
             <span className="text-bk-orange font-semibold text-sm tracking-wide uppercase">Burger King</span>
           </div>
-          <h1 className="font-flame text-4xl sm:text-5xl font-bold text-bk-brown leading-tight mb-4">
+          <h1 className="font-flame text-5xl sm:text-6xl font-bold text-bk-brown leading-tight mb-4">
             Гостемания
           </h1>
           <p className="text-bk-brown/70 text-lg max-w-xl leading-relaxed">
@@ -86,13 +83,10 @@ export default function HomePage() {
             <Link
               key={section.href}
               href={section.href}
-              className={`group relative bg-white border-2 ${section.border} rounded-2xl p-6 sm:p-8 transition-all duration-200 hover:shadow-lg flex flex-col sm:flex-row sm:items-center gap-5`}
+              className={`group bg-white border-2 ${section.border} rounded-2xl p-6 sm:p-8 transition-all duration-200 hover:shadow-lg flex flex-col sm:flex-row sm:items-center gap-5`}
             >
-              {/* Accent line */}
-              <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl ${section.accent} opacity-60 group-hover:opacity-100 transition-opacity`} />
-
               {/* Icon */}
-              <div className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 text-white ${section.accent}`}>
+              <div className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 text-white ${section.iconBg}`}>
                 {section.icon}
               </div>
 
@@ -104,7 +98,7 @@ export default function HomePage() {
                     {section.tag}
                   </span>
                 </div>
-                <h2 className="font-flame text-xl sm:text-2xl font-bold text-bk-brown mb-1.5">
+                <h2 className="font-flame text-2xl sm:text-3xl font-bold text-bk-brown mb-1.5">
                   {section.title}
                 </h2>
                 <p className="text-bk-brown/65 text-sm sm:text-base leading-relaxed">

@@ -27,9 +27,9 @@ export default function PageHeader({
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4">
         <BackButton href={backHref} label={backLabel} />
         <div className="mt-3 flex items-center gap-3">
-          <div className={`w-1 h-8 rounded-full ${accentClasses[accent] ?? accentClasses.orange}`} />
+          <div className={`w-1 h-9 rounded-full ${accentClasses[accent] ?? accentClasses.orange}`} />
           <div>
-            <h1 className="font-flame text-xl sm:text-2xl font-bold text-bk-brown leading-tight">
+            <h1 className="font-flame text-2xl sm:text-3xl font-bold text-bk-brown leading-tight">
               {title}
             </h1>
             {subtitle && (
