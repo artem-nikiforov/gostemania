@@ -38,8 +38,9 @@ interface DocBase {
   /** 0-based индекс вопроса, на котором материал становится доступен.
    *  Если не задан — материал доступен сразу (показывается в «Изучи материалы»). */
   unlockAt?: number;
-  /** Подпись, поясняющая появление материала по ходу кейса. */
-  unlockNote?: string;
+  /** Материал открывается только изнутри подсказки на вопросе unlockAt —
+   *  директор должен сам запросить отчёт. */
+  revealInHint?: boolean;
 }
 
 export type CaseDoc = DocBase & (
@@ -65,8 +66,6 @@ export interface GameCase {
   id: string;
   number: number;
   title: string;
-  badge: string;
-  badgeColor: string; // tailwind classes
   intro: string;
   studyItems: string[];
   preDocs: CaseDoc[];
@@ -83,9 +82,7 @@ export interface GameCase {
 const case1: GameCase = {
   id: "case1",
   number: 1,
-  title: "Нерабочий план. Март",
-  badge: "ПД не рабочий",
-  badgeColor: "bg-bk-red/10 text-bk-red",
+  title: "Разбор плана. Март",
   intro:
     "Ресторан третий месяц не выполняет цели по Индексу Гостемании, команда не получает премию. Давай вместе посмотрим отчёты — ты сам проанализируешь ситуацию и предложишь, что делаем дальше. Я буду задавать вопросы, а решения предлагаешь ты.",
   studyItems: [
@@ -178,7 +175,7 @@ const case1: GameCase = {
       type: "complements",
       title: "Отчёт по комплементам",
       unlockAt: 3,
-      unlockNote: "Директор запросил дополнительный отчёт — теперь он доступен.",
+      revealInHint: true,
       rows: [
         { month: "Март 2026", limit: 60, used: 7, remaining: 53, dobroUsed: 25 },
         { month: "Февраль 2026", limit: 50, used: 0, remaining: 50, dobroUsed: 13 },
@@ -227,9 +224,7 @@ const case1: GameCase = {
 const case2: GameCase = {
   id: "case2",
   number: 2,
-  title: "Нерабочий план. Декабрь",
-  badge: "ПД не рабочий",
-  badgeColor: "bg-bk-red/10 text-bk-red",
+  title: "Разбор плана. Декабрь",
   intro:
     "Ресторан третий месяц не выполняет цели по Индексу Гостемании, сотрудники без премии. Давай вместе посмотрим отзывы за декабрь — ты сам проанализируешь ситуацию и предложишь, что делаем дальше. Я буду задавать вопросы, а решения предлагаешь ты.",
   studyItems: [
@@ -357,9 +352,7 @@ const case2: GameCase = {
 const case3: GameCase = {
   id: "case3",
   number: 3,
-  title: "Нерабочий план. Вкус блюд",
-  badge: "ПД не рабочий",
-  badgeColor: "bg-bk-red/10 text-bk-red",
+  title: "Разбор плана. Вкус блюд",
   intro:
     "Ресторан не выполняет цели по Индексу Гостемании. Давай разберём отзывы вместе и посмотрим, что пошло не так с планом действий.",
   studyItems: [
@@ -428,8 +421,6 @@ const case4: GameCase = {
   id: "case4",
   number: 4,
   title: "Необычная ситуация",
-  badge: "Особый кейс",
-  badgeColor: "bg-bk-yellow/20 text-bk-brown",
   intro:
     "Ресторан 2 месяца (ноябрь, декабрь) не выполнял цели по Индексу Гостемании, сотрудники без премии. В декабре команда не была включена в работу по Гостемании. Давай разберём отзывы — ты сам проанализируешь ситуацию и предложишь, что важно делать, когда проблемы размыты.",
   studyItems: [
@@ -480,7 +471,6 @@ const case4: GameCase = {
       type: "plan",
       title: "ПД ресторана — после визита ТУ",
       unlockAt: 3,
-      unlockNote: "После личного визита ТУ команда составила план — материал открыт.",
       header: "Работаем над Гостеманией вместе",
       sections: [
         {
@@ -567,9 +557,7 @@ const case4: GameCase = {
 const case6: GameCase = {
   id: "case6",
   number: 6,
-  title: "Есть план, но нет результата",
-  badge: "ПД рабочий",
-  badgeColor: "bg-bk-green/10 text-bk-green",
+  title: "Разбор плана. Точность и скорость",
   intro:
     "Ресторан 3 месяца подряд не выполняет Индекс Гостемании. Есть план действий, но результат не улучшается. Давай разберём, что делать, когда план есть, но не работает.",
   studyItems: [
@@ -725,9 +713,7 @@ const case6: GameCase = {
 const case7: GameCase = {
   id: "case7",
   number: 7,
-  title: "План работает — но не для всех",
-  badge: "ПД рабочий",
-  badgeColor: "bg-bk-green/10 text-bk-green",
+  title: "Разбор плана. Март и апрель",
   intro:
     "Ресторан третий месяц не выполняет цели по Индексу Гостемании, команда не получает премию. Давай вместе посмотрим отчёты — ты сам проанализируешь ситуацию и предложишь, что делаем дальше.",
   studyItems: [

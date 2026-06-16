@@ -336,12 +336,7 @@ function CaseGame({ gameCase, onExit, onAnother }: {
     if (slide.type === "instruction") {
       return (
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
-          <div className="flex items-center gap-2 mb-4">
-            <span className={`text-xs font-semibold px-3 py-1 rounded-full ${gameCase.badgeColor}`}>
-              {gameCase.badge}
-            </span>
-            <span className="text-xs text-bk-brown/40">Кейс {gameCase.number}</span>
-          </div>
+          <p className="text-xs font-semibold text-bk-brown/40 mb-3">Кейс {gameCase.number}</p>
           <h2 className="font-flame font-bold text-2xl sm:text-3xl text-bk-brown mb-5 leading-snug">
             {gameCase.title}
           </h2>
@@ -402,26 +397,26 @@ function CaseGame({ gameCase, onExit, onAnother }: {
       const q = allQuestions[slide.qIdx];
       if (!q) return null;
 
-      const availableDocs = allDocs.filter(
-        (d) => d.unlockAt === undefined || d.unlockAt <= slide.qIdx
+      // Материалы, которые открываются только изнутри подсказки на этом вопросе
+      const hintDocs = allDocs.filter(
+        (d) => d.revealInHint && d.unlockAt === slide.qIdx
       );
-      const justUnlocked = allDocs.filter((d) => d.unlockAt === slide.qIdx);
+      // Отчёты в общем списке: уже «открытые» к этому вопросу
+      // (материалы с revealInHint появляются здесь только со следующего вопроса)
+      const availableDocs = allDocs.filter(
+        (d) =>
+          d.unlockAt === undefined ||
+          d.unlockAt < slide.qIdx ||
+          (d.unlockAt === slide.qIdx && !d.revealInHint)
+      );
+      // На вопросе с «отчётом из подсказки» кнопка «Далее» появляется после подсказки
+      const showNext = hintDocs.length === 0 || showHint;
 
       return (
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
           <p className="text-xs font-semibold text-bk-brown/40 mb-3">
             Вопрос {slide.qIdx + 1} из {allQuestions.length}
           </p>
-
-          {justUnlocked.map((d, i) => (
-            <div key={i} className="flex gap-2.5 items-start bg-bk-yellow/15 border border-bk-yellow/40 rounded-xl px-4 py-3 mb-4">
-              <span className="text-base shrink-0">🔓</span>
-              <p className="text-sm text-bk-brown/85 leading-snug">
-                <span className="font-semibold">Новый материал: {d.title}.</span>
-                {d.unlockNote ? ` ${d.unlockNote}` : ""}
-              </p>
-            </div>
-          ))}
 
           <div className="bg-bk-cream/60 border border-bk-cream rounded-2xl p-5 mb-5">
             <p className="text-xs font-semibold text-bk-orange uppercase tracking-wide mb-2">ТУ спрашивает:</p>
@@ -449,26 +444,44 @@ function CaseGame({ gameCase, onExit, onAnother }: {
             </div>
           )}
 
+          {/* Подсказка — нажимать необязательно */}
           {!showHint ? (
             <button
               onClick={() => setShowHint(true)}
-              className="w-full py-3 rounded-xl bg-white border-2 border-bk-brown/15 text-bk-brown/65 font-semibold hover:bg-bk-cream/50 transition-colors mb-4"
+              className="w-full py-3 rounded-xl bg-white border-2 border-bk-brown/15 text-bk-brown/65 font-semibold hover:bg-bk-cream/50 transition-colors mb-3"
             >
               💡 Подсказка
             </button>
           ) : (
-            <>
-              <div className="bg-bk-green/10 border border-bk-green/25 rounded-2xl p-5 mb-5">
-                <p className="text-xs font-semibold text-bk-green uppercase tracking-wide mb-2">Подсказка — верный ответ:</p>
-                <p className="text-bk-brown/85 text-sm leading-relaxed">{q.hint}</p>
-              </div>
-              <button
-                onClick={advance}
-                className="w-full py-3 rounded-xl bg-bk-green text-white font-semibold hover:bg-bk-green/80 transition-colors"
-              >
-                Далее →
-              </button>
-            </>
+            <div className="bg-bk-green/10 border border-bk-green/25 rounded-2xl p-5 mb-3">
+              <p className="text-xs font-semibold text-bk-green uppercase tracking-wide mb-2">Подсказка — верный ответ:</p>
+              <p className="text-bk-brown/85 text-sm leading-relaxed">{q.hint}</p>
+              {hintDocs.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-bk-green/20">
+                  {hintDocs.map((d, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setModalDoc(d)}
+                      className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg bg-white border border-bk-green/40 text-bk-brown/80 hover:border-bk-green transition-colors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                      </svg>
+                      Открыть: {d.title}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {showNext && (
+            <button
+              onClick={advance}
+              className="w-full py-3 rounded-xl bg-bk-green text-white font-semibold hover:bg-bk-green/80 transition-colors"
+            >
+              Далее →
+            </button>
           )}
         </div>
       );
