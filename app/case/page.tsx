@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import PageHeader from "../components/PageHeader";
 import {
   gameCases,
@@ -732,14 +732,32 @@ function StartScreen({ onStart }: { onStart: () => void }) {
 
 // ─── Страница ─────────────────────────────────────────────────────────────────
 
+// Перемешивание (Фишер–Йейтс)
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 export default function CasePage() {
   const [activeCase, setActiveCase] = useState<GameCase | null>(null);
+  // «Мешок» из перемешанных кейсов: каждый кейс выпадает ровно один раз
+  // за цикл — это даёт всем кейсам одинаковую вероятность и без повторов подряд.
+  const bagRef = useRef<GameCase[]>([]);
 
-  const pickRandom = (exclude?: GameCase) => {
-    const pool = exclude && gameCases.length > 1
-      ? gameCases.filter((c) => c.id !== exclude.id)
-      : gameCases;
-    return pool[Math.floor(Math.random() * pool.length)];
+  const drawCase = (exclude?: GameCase): GameCase => {
+    if (bagRef.current.length === 0) {
+      const bag = shuffle(gameCases);
+      // не повторяем тот же кейс сразу после предыдущего на стыке циклов
+      if (exclude && bag.length > 1 && bag[0].id === exclude.id) {
+        [bag[0], bag[1]] = [bag[1], bag[0]];
+      }
+      bagRef.current = bag;
+    }
+    return bagRef.current.shift()!;
   };
 
   if (activeCase) {
@@ -748,10 +766,10 @@ export default function CasePage() {
         key={activeCase.id}
         gameCase={activeCase}
         onExit={() => setActiveCase(null)}
-        onAnother={() => setActiveCase(pickRandom(activeCase))}
+        onAnother={() => setActiveCase(drawCase(activeCase))}
       />
     );
   }
 
-  return <StartScreen onStart={() => setActiveCase(pickRandom())} />;
+  return <StartScreen onStart={() => setActiveCase(drawCase())} />;
 }
