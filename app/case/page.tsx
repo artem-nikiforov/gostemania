@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import PageHeader from "../components/PageHeader";
 import {
   gameCases,
@@ -9,36 +9,39 @@ import {
   type ReviewRow,
 } from "../data/case";
 
+// Примерное время прохождения (для «бирки» на стартовой плашке)
+const ESTIMATED_TIME = "≈ 10 минут";
+
+// Инструкция для ТУ (показывается в начале каждого кейса)
+const INSTRUCTION_STEPS = [
+  "Показываешь ДР кейс.",
+  "Задаёшь вопросы ДР из кнопки «Задай вопрос».",
+  "Если ДР отвечает правильно — идёшь дальше. Если нет — направляешь директора на верный ответ. Для тебя будет «Подсказка» — верный вариант ответа.",
+  "В конце проходишь по «Чек-листу для ТУ» и отмечаешь выполненные пункты.",
+];
+
 // ─── Типы слайдов ─────────────────────────────────────────────────────────────
 
 type Slide =
-  | { type: "intro" }
-  | { type: "study" }
-  | { type: "doc"; docIdx: number; phase: "pre" | "mid" }
-  | { type: "mid-reveal" }
-  | { type: "question"; qIdx: number; phase: "pre" | "mid" }
-  | { type: "checklistQ" }
-  | { type: "checklist" }
+  | { type: "instruction" }
+  | { type: "materials" }
+  | { type: "question"; qIdx: number }
+  | { type: "summary" }
   | { type: "result" };
 
 function computeSlides(gc: GameCase): Slide[] {
-  const s: Slide[] = [
-    { type: "intro" },
-    { type: "study" },
-    ...gc.preDocs.map((_, i) => ({ type: "doc" as const, docIdx: i, phase: "pre" as const })),
-    ...gc.preQuestions.map((_, i) => ({ type: "question" as const, qIdx: i, phase: "pre" as const })),
+  const totalQuestions =
+    gc.preQuestions.length + (gc.midQuestions?.length ?? 0);
+  return [
+    { type: "instruction" },
+    { type: "materials" },
+    ...Array.from({ length: totalQuestions }, (_, i) => ({
+      type: "question" as const,
+      qIdx: i,
+    })),
+    { type: "summary" },
+    { type: "result" },
   ];
-  if (gc.midDocs && gc.midDocs.length > 0) {
-    s.push({ type: "mid-reveal" });
-    gc.midDocs.forEach((_, i) => s.push({ type: "doc", docIdx: i, phase: "mid" }));
-  }
-  if (gc.midQuestions) {
-    gc.midQuestions.forEach((_, i) => s.push({ type: "question", qIdx: i, phase: "mid" }));
-  }
-  s.push({ type: "checklistQ" });
-  s.push({ type: "checklist" });
-  s.push({ type: "result" });
-  return s;
 }
 
 // ─── Рейтинг ─────────────────────────────────────────────────────────────────
@@ -56,7 +59,7 @@ function RatingDot({ r }: { r: 1 | 2 | 3 }) {
   );
 }
 
-// ─── Таблица отзывов ──────────────────────────────────────────────────────────
+// ─── Таблица отзывов (легенда ПЕРЕД таблицей) ────────────────────────────────
 
 const ATTRS: { key: keyof ReviewRow; short: string; full: string }[] = [
   { key: "taste",       short: "Вк", full: "Вкус блюд" },
@@ -70,6 +73,9 @@ const ATTRS: { key: keyof ReviewRow; short: string; full: string }[] = [
 function ReviewTable({ rows }: { rows: ReviewRow[] }) {
   return (
     <div>
+      <p className="text-[11px] text-bk-brown/45 mb-2 leading-relaxed">
+        {ATTRS.map((a) => `${a.short} = ${a.full}`).join(" · ")}
+      </p>
       <div className="overflow-x-auto rounded-xl border border-bk-brown/20">
         <table className="w-full text-xs bg-white border-collapse" style={{ minWidth: 520 }}>
           <thead>
@@ -106,19 +112,18 @@ function ReviewTable({ rows }: { rows: ReviewRow[] }) {
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-bk-brown/40 mt-1.5 leading-relaxed">
-        {ATTRS.map((a) => `${a.short} = ${a.full}`).join(" · ")}
-      </p>
     </div>
   );
 }
 
 // ─── Документы ────────────────────────────────────────────────────────────────
 
-function DocView({ doc }: { doc: CaseDoc }) {
+function DocView({ doc, showTitle = true }: { doc: CaseDoc; showTitle?: boolean }) {
   return (
     <div>
-      <h3 className="font-flame font-bold text-xl sm:text-2xl text-bk-brown mb-4">{doc.title}</h3>
+      {showTitle && (
+        <h3 className="font-flame font-bold text-xl sm:text-2xl text-bk-brown mb-4">{doc.title}</h3>
+      )}
 
       {doc.type === "reviews" && <ReviewTable rows={doc.rows} />}
 
@@ -223,6 +228,50 @@ function DocView({ doc }: { doc: CaseDoc }) {
   );
 }
 
+// ─── Модальное окно с отчётом ────────────────────────────────────────────────
+
+function DocModal({ doc, onClose }: { doc: CaseDoc; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/40 p-3 sm:p-6 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full max-w-3xl my-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-bk-cream sticky top-0 bg-white rounded-t-2xl">
+          <h3 className="font-flame font-bold text-lg text-bk-brown leading-tight pr-2">{doc.title}</h3>
+          <button
+            onClick={onClose}
+            aria-label="Закрыть"
+            className="w-9 h-9 rounded-full bg-bk-cream/70 hover:bg-bk-cream text-bk-brown flex items-center justify-center shrink-0 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div className="p-5">
+          <DocView doc={doc} showTitle={false} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Кнопка «Далее» ───────────────────────────────────────────────────────────
 
 function NextBtn({ onClick, label = "Далее →" }: { onClick: () => void; label?: string }) {
@@ -238,14 +287,30 @@ function NextBtn({ onClick, label = "Далее →" }: { onClick: () => void; l
 
 // ─── Игровой экран ────────────────────────────────────────────────────────────
 
-function CaseGame({ gameCase, onBack }: { gameCase: GameCase; onBack: () => void }) {
+function CaseGame({ gameCase, onExit, onAnother }: {
+  gameCase: GameCase;
+  onExit: () => void;
+  onAnother: () => void;
+}) {
   const [slideIndex, setSlideIndex] = useState(0);
   const [showHint, setShowHint] = useState(false);
+  const [showSummaryHint, setShowSummaryHint] = useState(false);
   const [checklist, setChecklist] = useState<Record<string, boolean>>({});
+  const [modalDoc, setModalDoc] = useState<CaseDoc | null>(null);
 
+  const allDocs = useMemo(
+    () => [...gameCase.preDocs, ...(gameCase.midDocs ?? [])],
+    [gameCase]
+  );
+  const allQuestions = useMemo(
+    () => [...gameCase.preQuestions, ...(gameCase.midQuestions ?? [])],
+    [gameCase]
+  );
   const slides = useMemo(() => computeSlides(gameCase), [gameCase]);
   const slide = slides[slideIndex];
   const progress = ((slideIndex + 1) / slides.length) * 100;
+
+  const startDocs = allDocs.filter((d) => d.unlockAt === undefined);
 
   const advance = () => {
     setSlideIndex((s) => s + 1);
@@ -253,169 +318,223 @@ function CaseGame({ gameCase, onBack }: { gameCase: GameCase; onBack: () => void
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const restart = () => {
+    setSlideIndex(0);
+    setShowHint(false);
+    setShowSummaryHint(false);
+    setChecklist({});
+    setModalDoc(null);
+    window.scrollTo({ top: 0 });
+  };
+
   const checkedCount = Object.values(checklist).filter(Boolean).length;
   const totalItems = gameCase.checklist.length;
   const pct = totalItems > 0 ? Math.round((checkedCount / totalItems) * 100) : 0;
 
   function renderSlide() {
-    // ── Вступление ────────────────────────────────────────────────────────────
-    if (slide.type === "intro") {
+    // ── Инструкция ────────────────────────────────────────────────────────────
+    if (slide.type === "instruction") {
       return (
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
-          <div className="flex items-center gap-2 mb-4">
-            <span className={`text-xs font-semibold px-3 py-1 rounded-full ${gameCase.badgeColor}`}>
-              {gameCase.badge}
-            </span>
-            <span className="text-xs text-bk-brown/40">Кейс {gameCase.number}</span>
-          </div>
+          <p className="text-xs font-semibold text-bk-brown/40 mb-3">Кейс {gameCase.number}</p>
           <h2 className="font-flame font-bold text-2xl sm:text-3xl text-bk-brown mb-5 leading-snug">
             {gameCase.title}
           </h2>
-          <div className="bg-bk-cream/60 border border-bk-cream rounded-2xl p-5 mb-8">
-            <p className="text-xs font-semibold text-bk-orange uppercase tracking-wide mb-2">ТУ говорит:</p>
-            <p className="text-bk-brown/85 text-sm sm:text-base leading-relaxed">{gameCase.intro}</p>
+
+          <div className="bg-bk-cream/60 border border-bk-cream rounded-2xl p-5 mb-5">
+            <p className="text-bk-brown/85 text-sm sm:text-base leading-relaxed">
+              Ты проводишь ролевую игру с Директором ресторана. Твоя задача — не давать
+              готовых ответов, а направлять его к самостоятельным решениям.
+            </p>
           </div>
+
+          <p className="font-flame font-bold text-bk-brown mb-3">Порядок действий:</p>
+          <div className="space-y-3 mb-8">
+            {INSTRUCTION_STEPS.map((step, i) => (
+              <div key={i} className="flex gap-3 items-start bg-white border border-bk-brown/15 rounded-xl px-4 py-3">
+                <span className="w-6 h-6 rounded-full bg-bk-orange/15 text-bk-orange text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  {i + 1}
+                </span>
+                <span className="text-sm text-bk-brown/80 leading-relaxed">{step}</span>
+              </div>
+            ))}
+          </div>
+
           <button
             onClick={advance}
             className="w-full py-3.5 rounded-xl bg-bk-orange text-white font-flame font-bold text-lg hover:bg-bk-orange/80 transition-colors"
           >
-            Начать →
+            Далее →
           </button>
         </div>
       );
     }
 
-    // ── Изучи материалы ───────────────────────────────────────────────────────
-    if (slide.type === "study") {
+    // ── Изучи материалы (всё на одной странице) ───────────────────────────────
+    if (slide.type === "materials") {
       return (
-        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
-          <h3 className="font-flame font-bold text-2xl text-bk-brown mb-3">Изучи материалы</h3>
-          <p className="text-bk-brown/60 text-sm mb-5">ТУ передаёт директору следующие отчёты:</p>
-          <div className="space-y-3 mb-8">
-            {gameCase.studyItems.map((item, i) => (
-              <div key={i} className="flex gap-3 items-start bg-white border border-bk-brown/15 rounded-xl px-4 py-3">
-                <span className="w-6 h-6 rounded-full bg-bk-brown/10 text-bk-brown text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                  {i + 1}
-                </span>
-                <span className="text-sm text-bk-brown/80">{item}</span>
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+          <h3 className="font-flame font-bold text-2xl sm:text-3xl text-bk-brown mb-2">Изучи материалы</h3>
+          <p className="text-bk-brown/60 text-sm mb-6">
+            Покажи материалы директору. Пролистайте вниз и изучите всё, затем переходите к вопросам.
+          </p>
+
+          <div className="space-y-8 mb-8">
+            {startDocs.map((doc, i) => (
+              <div key={i}>
+                <DocView doc={doc} />
               </div>
             ))}
           </div>
-          <NextBtn onClick={advance} label="Перейти к материалам →" />
-        </div>
-      );
-    }
 
-    // ── Документ ─────────────────────────────────────────────────────────────
-    if (slide.type === "doc") {
-      const docs = slide.phase === "pre" ? gameCase.preDocs : (gameCase.midDocs ?? []);
-      const doc = docs[slide.docIdx];
-      if (!doc) return null;
-      return (
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
-          <div className="mb-6">
-            <DocView doc={doc} />
-          </div>
-          <NextBtn onClick={advance} />
-        </div>
-      );
-    }
-
-    // ── Промежуточное раскрытие ───────────────────────────────────────────────
-    if (slide.type === "mid-reveal") {
-      return (
-        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10 text-center">
-          <div className="w-16 h-16 rounded-2xl bg-bk-yellow/20 mx-auto mb-5 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#502314" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.55">
-              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-            </svg>
-          </div>
-          <h3 className="font-flame font-bold text-2xl text-bk-brown mb-3">
-            Результаты после визита ТУ
-          </h3>
-          <p className="text-bk-brown/60 text-sm mb-8 leading-relaxed">
-            ТУ посетил ресторан, помог директору составить план и отработал с командой.<br />Посмотрим, что изменилось.
-          </p>
-          <button
-            onClick={advance}
-            className="w-full py-3.5 rounded-xl bg-bk-yellow text-bk-brown font-flame font-bold text-lg hover:bg-bk-yellow/80 transition-colors"
-          >
-            Посмотреть результаты →
-          </button>
+          <NextBtn onClick={advance} label="Перейти к вопросам →" />
         </div>
       );
     }
 
     // ── Вопрос ───────────────────────────────────────────────────────────────
     if (slide.type === "question") {
-      const questions = slide.phase === "pre" ? gameCase.preQuestions : (gameCase.midQuestions ?? []);
-      const q = questions[slide.qIdx];
+      const q = allQuestions[slide.qIdx];
       if (!q) return null;
-      const qNum = slide.phase === "pre"
-        ? slide.qIdx + 1
-        : gameCase.preQuestions.length + slide.qIdx + 1;
+
+      // Материалы, которые открываются только изнутри подсказки на этом вопросе
+      const hintDocs = allDocs.filter(
+        (d) => d.revealInHint && d.unlockAt === slide.qIdx
+      );
+      // Отчёты в общем списке: уже «открытые» к этому вопросу
+      // (материалы с revealInHint появляются здесь только со следующего вопроса)
+      const availableDocs = allDocs.filter(
+        (d) =>
+          d.unlockAt === undefined ||
+          d.unlockAt < slide.qIdx ||
+          (d.unlockAt === slide.qIdx && !d.revealInHint)
+      );
+      // На вопросе с «отчётом из подсказки» кнопка «Далее» появляется после подсказки
+      const showNext = hintDocs.length === 0 || showHint;
 
       return (
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
-          <p className="text-xs font-semibold text-bk-brown/40 mb-3">Вопрос {qNum}</p>
+          <p className="text-xs font-semibold text-bk-brown/40 mb-3">
+            Вопрос {slide.qIdx + 1} из {allQuestions.length}
+          </p>
+
           <div className="bg-bk-cream/60 border border-bk-cream rounded-2xl p-5 mb-5">
             <p className="text-xs font-semibold text-bk-orange uppercase tracking-wide mb-2">ТУ спрашивает:</p>
             <p className="text-bk-brown text-sm sm:text-base leading-relaxed">{q.facilitatorText}</p>
           </div>
 
+          {/* Кнопки открытия отчётов */}
+          {availableDocs.length > 0 && (
+            <div className="mb-5">
+              <p className="text-xs font-semibold text-bk-brown/45 uppercase tracking-wide mb-2">Отчёты</p>
+              <div className="flex flex-wrap gap-2">
+                {availableDocs.map((d, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setModalDoc(d)}
+                    className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg bg-white border border-bk-brown/20 text-bk-brown/80 hover:border-bk-orange/50 hover:text-bk-brown transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    {d.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Подсказка — нажимать необязательно */}
           {!showHint ? (
             <button
               onClick={() => setShowHint(true)}
-              className="w-full py-3 rounded-xl bg-white border-2 border-bk-brown/15 text-bk-brown/65 font-semibold hover:bg-bk-cream/50 transition-colors mb-4"
+              className="w-full py-3 rounded-xl bg-white border-2 border-bk-brown/15 text-bk-brown/65 font-semibold hover:bg-bk-cream/50 transition-colors mb-3"
             >
-              💡 Показать правильный ответ
+              💡 Подсказка
             </button>
           ) : (
-            <>
-              <div className="bg-bk-green/10 border border-bk-green/25 rounded-2xl p-5 mb-5">
-                <p className="text-xs font-semibold text-bk-green uppercase tracking-wide mb-2">Правильный ответ:</p>
-                <p className="text-bk-brown/85 text-sm leading-relaxed">{q.hint}</p>
-              </div>
-              <button
-                onClick={advance}
-                className="w-full py-3 rounded-xl bg-bk-green text-white font-semibold hover:bg-bk-green/80 transition-colors"
-              >
-                Далее →
-              </button>
-            </>
+            <div className="bg-bk-green/10 border border-bk-green/25 rounded-2xl p-5 mb-3">
+              <p className="text-xs font-semibold text-bk-green uppercase tracking-wide mb-2">Подсказка — верный ответ:</p>
+              <p className="text-bk-brown/85 text-sm leading-relaxed">{q.hint}</p>
+              {hintDocs.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-bk-green/20">
+                  {hintDocs.map((d, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setModalDoc(d)}
+                      className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg bg-white border border-bk-green/40 text-bk-brown/80 hover:border-bk-green transition-colors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                      </svg>
+                      Открыть: {d.title}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {showNext && (
+            <button
+              onClick={advance}
+              className="w-full py-3 rounded-xl bg-bk-green text-white font-semibold hover:bg-bk-green/80 transition-colors"
+            >
+              Далее →
+            </button>
           )}
         </div>
       );
     }
 
-    // ── Вопрос перед чеклистом ────────────────────────────────────────────────
-    if (slide.type === "checklistQ") {
+    // ── Подводим итоги (ТУ просит + подсказка + чек-лист + завершить) ─────────
+    if (slide.type === "summary") {
+      const availableDocs = allDocs.filter(
+        (d) => d.unlockAt === undefined || d.unlockAt <= allQuestions.length
+      );
       return (
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
-          <h3 className="font-flame font-bold text-2xl text-bk-brown mb-4">Подводим итоги</h3>
-          <div className="bg-bk-cream/60 border border-bk-cream rounded-2xl p-5 mb-5">
+          <h3 className="font-flame font-bold text-2xl sm:text-3xl text-bk-brown mb-4">Подводим итоги</h3>
+
+          <div className="bg-bk-cream/60 border border-bk-cream rounded-2xl p-5 mb-4">
             <p className="text-xs font-semibold text-bk-orange uppercase tracking-wide mb-2">ТУ просит:</p>
             <p className="text-bk-brown text-sm sm:text-base leading-relaxed">{gameCase.checklistQuestion}</p>
           </div>
-          <p className="text-bk-brown/50 text-sm mb-6">
-            Выслушай ответ директора, затем отметь в чеклисте то, что он правильно назвал.
-          </p>
-          <button
-            onClick={advance}
-            className="w-full py-3 rounded-xl bg-bk-orange text-white font-semibold hover:bg-bk-orange/80 transition-colors"
-          >
-            Перейти к чеклисту →
-          </button>
-        </div>
-      );
-    }
 
-    // ── Чеклист ───────────────────────────────────────────────────────────────
-    if (slide.type === "checklist") {
-      return (
-        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
-          <h3 className="font-flame font-bold text-2xl text-bk-brown mb-2">Чеклист ТУ</h3>
-          <p className="text-bk-brown/50 text-sm mb-5">Отметь пункты, которые директор назвал правильно.</p>
+          {availableDocs.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-4">
+              {availableDocs.map((d, i) => (
+                <button
+                  key={i}
+                  onClick={() => setModalDoc(d)}
+                  className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg bg-white border border-bk-brown/20 text-bk-brown/80 hover:border-bk-orange/50 hover:text-bk-brown transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                  </svg>
+                  {d.title}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {!showSummaryHint ? (
+            <button
+              onClick={() => setShowSummaryHint(true)}
+              className="w-full py-3 rounded-xl bg-white border-2 border-bk-brown/15 text-bk-brown/65 font-semibold hover:bg-bk-cream/50 transition-colors mb-6"
+            >
+              💡 Подсказка
+            </button>
+          ) : (
+            <div className="bg-bk-green/10 border border-bk-green/25 rounded-2xl p-5 mb-6">
+              <p className="text-xs font-semibold text-bk-green uppercase tracking-wide mb-2">Подсказка — верный ответ:</p>
+              <p className="text-bk-brown/85 text-sm leading-relaxed">{gameCase.checklistHint}</p>
+            </div>
+          )}
+
+          {/* Чек-лист прямо здесь */}
+          <h4 className="font-flame font-bold text-lg text-bk-brown mb-1">Чек-лист для ТУ</h4>
+          <p className="text-bk-brown/50 text-sm mb-4">Отметь пункты, которые директор назвал правильно.</p>
           <div className="space-y-2.5 mb-5">
             {gameCase.checklist.map((item) => {
               const on = !!checklist[item.id];
@@ -451,13 +570,9 @@ function CaseGame({ gameCase, onBack }: { gameCase: GameCase; onBack: () => void
             })}
           </div>
 
-          {/* Прогресс */}
           <div className="flex items-center gap-3 mb-4 px-1">
             <div className="flex-1 h-1.5 bg-bk-cream rounded-full overflow-hidden">
-              <div
-                className="h-full bg-bk-green rounded-full transition-all duration-300"
-                style={{ width: `${pct}%` }}
-              />
+              <div className="h-full bg-bk-green rounded-full transition-all duration-300" style={{ width: `${pct}%` }} />
             </div>
             <span className="text-xs font-semibold text-bk-brown/60 whitespace-nowrap">
               {checkedCount} / {totalItems}
@@ -514,21 +629,16 @@ function CaseGame({ gameCase, onBack }: { gameCase: GameCase; onBack: () => void
 
           <div className="flex flex-col sm:flex-row gap-3">
             <button
-              onClick={() => {
-                setSlideIndex(0);
-                setShowHint(false);
-                setChecklist({});
-                window.scrollTo({ top: 0 });
-              }}
+              onClick={restart}
               className="flex-1 py-3 rounded-xl bg-white border-2 border-bk-brown/20 text-bk-brown/65 font-semibold hover:bg-bk-cream/50 transition-colors"
             >
-              🔁 Начать заново
+              🔁 Этот кейс заново
             </button>
             <button
-              onClick={onBack}
+              onClick={onAnother}
               className="flex-1 py-3 rounded-xl bg-bk-orange text-white font-semibold hover:bg-bk-orange/80 transition-colors"
             >
-              📋 Другой кейс
+              🎲 Другой кейс
             </button>
           </div>
         </div>
@@ -545,9 +655,9 @@ function CaseGame({ gameCase, onBack }: { gameCase: GameCase; onBack: () => void
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-3">
           <div className="flex items-center gap-3">
             <button
-              onClick={onBack}
+              onClick={onExit}
               className="text-bk-brown/45 hover:text-bk-brown transition-colors"
-              aria-label="Назад"
+              aria-label="На главную"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M19 12H5M12 5l-7 7 7 7"/>
@@ -570,15 +680,16 @@ function CaseGame({ gameCase, onBack }: { gameCase: GameCase; onBack: () => void
         </div>
       </div>
 
-      {/* Контент */}
       {renderSlide()}
+
+      {modalDoc && <DocModal doc={modalDoc} onClose={() => setModalDoc(null)} />}
     </div>
   );
 }
 
-// ─── Выбор кейса ─────────────────────────────────────────────────────────────
+// ─── Стартовый экран (только кнопка «Начать» → случайный кейс) ────────────────
 
-function CaseSelector({ onSelect }: { onSelect: (gc: GameCase) => void }) {
+function StartScreen({ onStart }: { onStart: () => void }) {
   return (
     <div className="min-h-screen bg-white">
       <PageHeader
@@ -587,40 +698,33 @@ function CaseSelector({ onSelect }: { onSelect: (gc: GameCase) => void }) {
         subtitle="Ролевая игра для ТУ и директора ресторана"
         accent="yellow"
       />
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
-        <h2 className="font-flame font-bold text-2xl sm:text-3xl text-bk-brown mb-2">Выбери кейс</h2>
-        <p className="text-bk-brown/55 text-sm mb-7">
-          ТУ проводит разбор реальной ситуации с директором ресторана. Изучите вместе отзывы, план и ответьте на вопросы.
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
+        <h2 className="font-flame font-bold text-2xl sm:text-3xl text-bk-brown mb-3">Разбор кейса с директором</h2>
+        <p className="text-bk-brown/60 text-sm sm:text-base mb-8 leading-relaxed">
+          ТУ проводит ролевую игру с директором ресторана: вместе изучаете отзывы Гостей и план
+          действий, отвечаете на вопросы и подводите итоги по чек-листу.
         </p>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          {gameCases.map((gc) => {
-            const docCount = gc.preDocs.length + (gc.midDocs?.length ?? 0);
-            const qCount = gc.preQuestions.length + (gc.midQuestions?.length ?? 0);
-            return (
-              <button
-                key={gc.id}
-                onClick={() => onSelect(gc)}
-                className="w-full text-left bg-white border-2 border-bk-cream hover:border-bk-yellow/50 rounded-2xl p-5 transition-all hover:shadow-md group"
-              >
-                <div className="flex items-start justify-between gap-2 mb-3">
-                  <span className="text-4xl font-flame font-bold text-bk-brown/12 leading-none">
-                    {gc.number < 10 ? `0${gc.number}` : gc.number}
-                  </span>
-                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full shrink-0 ${gc.badgeColor}`}>
-                    {gc.badge}
-                  </span>
-                </div>
-                <h3 className="font-flame font-bold text-lg text-bk-brown group-hover:text-bk-brown/75 leading-snug mb-1 transition-colors">
-                  {gc.title}
-                </h3>
-                <p className="text-xs text-bk-brown/35">
-                  {docCount} {docCount === 1 ? "документ" : "документа"} · {qCount} {qCount === 1 ? "вопрос" : "вопроса"} · {gc.checklist.length} пунктов чеклиста
-                </p>
-              </button>
-            );
-          })}
-        </div>
+        <button
+          onClick={onStart}
+          className="group w-full bg-bk-yellow hover:bg-bk-yellow/85 rounded-3xl p-7 sm:p-9 transition-colors text-left"
+        >
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-bk-brown/70 bg-white/60 px-3 py-1 rounded-full">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+              {ESTIMATED_TIME}
+            </span>
+            <span className="text-bk-brown/40 group-hover:text-bk-brown/70 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M12 5l7 7-7 7"/>
+              </svg>
+            </span>
+          </div>
+          <p className="font-flame font-bold text-3xl sm:text-4xl text-bk-brown mb-1">Начать</p>
+          <p className="text-bk-brown/70 text-sm sm:text-base">Открыть случайный кейс</p>
+        </button>
       </div>
     </div>
   );
@@ -628,12 +732,44 @@ function CaseSelector({ onSelect }: { onSelect: (gc: GameCase) => void }) {
 
 // ─── Страница ─────────────────────────────────────────────────────────────────
 
-export default function CasePage() {
-  const [selectedCase, setSelectedCase] = useState<GameCase | null>(null);
+// Перемешивание (Фишер–Йейтс)
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
-  if (selectedCase) {
-    return <CaseGame gameCase={selectedCase} onBack={() => setSelectedCase(null)} />;
+export default function CasePage() {
+  const [activeCase, setActiveCase] = useState<GameCase | null>(null);
+  // «Мешок» из перемешанных кейсов: каждый кейс выпадает ровно один раз
+  // за цикл — это даёт всем кейсам одинаковую вероятность и без повторов подряд.
+  const bagRef = useRef<GameCase[]>([]);
+
+  const drawCase = (exclude?: GameCase): GameCase => {
+    if (bagRef.current.length === 0) {
+      const bag = shuffle(gameCases);
+      // не повторяем тот же кейс сразу после предыдущего на стыке циклов
+      if (exclude && bag.length > 1 && bag[0].id === exclude.id) {
+        [bag[0], bag[1]] = [bag[1], bag[0]];
+      }
+      bagRef.current = bag;
+    }
+    return bagRef.current.shift()!;
+  };
+
+  if (activeCase) {
+    return (
+      <CaseGame
+        key={activeCase.id}
+        gameCase={activeCase}
+        onExit={() => setActiveCase(null)}
+        onAnother={() => setActiveCase(drawCase(activeCase))}
+      />
+    );
   }
 
-  return <CaseSelector onSelect={setSelectedCase} />;
+  return <StartScreen onStart={() => setActiveCase(drawCase())} />;
 }
