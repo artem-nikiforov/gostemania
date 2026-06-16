@@ -41,7 +41,7 @@ function clearSession() {
   sessionStorage.removeItem(SESSION_KEY);
 }
 
-// ─── Аватар гостя ────────────────────────────────────────────────────────────
+// ─── Аватар Гостя ────────────────────────────────────────────────────────────
 
 function GuestAvatar() {
   return (
@@ -169,7 +169,7 @@ function ErrorScreen({
         ) : (
           <div className="flex items-center gap-2 mb-2">
             <GuestAvatar />
-            <p className="text-xs font-semibold text-bk-red">Реакция гостя</p>
+            <p className="text-xs font-semibold text-bk-red">Реакция Гостя</p>
           </div>
         )}
         <p className="text-sm leading-relaxed text-bk-brown">{message}</p>
